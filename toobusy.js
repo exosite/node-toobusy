@@ -146,6 +146,20 @@ toobusy.onLag = function (fn, threshold) {
 /**
  * Private - starts checking lag.
  */
+/**
+In Exosite we realized that toobusy.js generate a large amount of false-positive (Our settings are highWater = 80 & smootingFactor = 1/5).
+Event with this conservative factor, in a sudden load increase on the server would cause currentLag to jump from 0 to 200+ ms and cause all consecutive requests to be rejected, even the server has largely the resource to handle them.
+
+This commit bring a proposal that solve this situation:
+
+Limit the maximum lag value:
+As highWater * 2 == (100% too busy) we want to avoid the current lag to suddenly jump to a state of rejection of all requests.
+Limiting the lag metric to highWater * 2 insure a smooth and coherent current Lag increase.
+
+Inverse smoothfactor for decrementing the currentLag value:
+In a situation of a quick punctual overload of the system the recovery should be fast to avoid false-negative rejections when the resources are already available.
+Inverting the smoothfactor when the lag measure is smaller than the current lag insure full resources usage.
+*/
 function start() {
   lastTime = Date.now();
 
@@ -154,8 +168,10 @@ function start() {
     var now = Date.now();
     var lag = now - lastTime;
     lag = Math.max(0, lag - interval);
+    // Reverse the factor for lag decrement
+    var factor = lag < currentLag ? 1 - smoothingFactor : smoothingFactor;
     // Dampen lag. See SMOOTHING_FACTOR initialization at the top of this file.
-    currentLag = smoothingFactor * lag + (1 - smoothingFactor) * currentLag;
+    currentLag = factor * Math.min(lag, highWater * 2) + (1 - factor) * currentLag;
     lastTime = now;
 
     if (lagEventThreshold !== -1 && currentLag > lagEventThreshold) {
